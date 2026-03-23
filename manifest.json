@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Flow Automation",
+  "version": "1.0",
+  "description": "Automate batch video and image generation on Google Flow.",
+  "permissions": [
+    "storage",
+    "downloads",
+    "scripting",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://labs.google/*",
+    "*://*.labs.google/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.labs.google/fx/tools/flow*",
+        "*://*.labs.google/flow*",
+        "*://labs.google/fx/tools/flow*",
+        "*://labs.google/flow*"
+      ],
+      "js": [
+        "logic.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["styles.css"],
+      "matches": ["*://labs.google/*"]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+/* styles.css - Flow Automation */
+
+body {
+    background-color: #000000;
+    color: #ffffff;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    margin: 0;
+    padding: 0;
+}
+
+.flow-btn {
+    background-color: #f0f0f0;
+    color: #000000;
+    border: none;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    transition: opacity 0.2s, background-color 0.2s;
+    border-radius: 4px;
+}
+
+.flow-btn:hover { 
+    opacity: 0.8; 
+}
+
+.flow-btn.danger {
+    background-color: #ff4444;
+    color: white;
+}
+
+/* Shadow DOM Specifics injected via content.js inline CSS */

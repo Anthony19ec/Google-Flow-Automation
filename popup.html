@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flow Automation</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { width:320px; padding:20px; background:#0f0f0f; color:#fff; font-family:'Inter',system-ui,sans-serif; font-size:13px; }
+        .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid #27272a; }
+        .title { font-weight:700; font-size:15px; display:flex; align-items:center; gap:6px; }
+        .badge { background:#eab308; color:#000; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:700; }
+        .dot { width:10px; height:10px; border-radius:50%; background:#2dd4bf; }
+        .info { color:#9ca3af; line-height:1.5; margin-bottom:16px; }
+        .info strong { color:#fff; }
+        .info code { background:#1f2937; padding:2px 6px; border-radius:4px; font-size:12px; }
+        .btn { display:block; width:100%; padding:10px; background:#2dd4bf; color:#000; border:none; border-radius:6px; font-weight:700; font-size:13px; cursor:pointer; text-align:center; transition:0.2s; }
+        .btn:hover { filter:brightness(1.1); }
+        .modes { display:flex; flex-wrap:wrap; gap:4px; margin-top:12px; padding-top:12px; border-top:1px solid #27272a; }
+        .mode-tag { background:#1f2937; color:#9ca3af; padding:3px 8px; border-radius:4px; font-size:10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="title">Flow Automation <span class="badge">v1.0</span></div>
+        <div class="dot" id="statusDot" title="Active"></div>
+    </div>
+
+    <div class="info" id="infoText">
+        <strong>Flow Automation</strong> powers batch generation on Google Flow.<br><br>
+        Open a Google Flow project page to see the automation panel.
+    </div>
+
+    <button class="btn" id="goToFlowBtn">Open New Flow Project</button>
+
+    <div class="modes">
+        <span class="mode-tag">Text→Video</span>
+        <span class="mode-tag">Frame→Video</span>
+        <span class="mode-tag">Components→Video</span>
+        <span class="mode-tag">Text→Image</span>
+        <span class="mode-tag">Image→Image</span>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

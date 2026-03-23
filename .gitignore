@@ -1,0 +1,18 @@
+# IDE / System
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Gemini / Antigravity Artifacts
+.gemini/
+brain/
+implementation_plan.md
+walkthrough.md
+task.md
+
+# Node / Build
+node_modules/
+dist/
+build/
+*.log

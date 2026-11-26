@@ -44,10 +44,10 @@ chrome.runtime.onInstalled.addListener(() => {
                 settings: {
                     defaultMode: 't2v', defaultAspect: '16:9', outputsPerPrompt: 1,
                     maxConcurrent: 1, delayMin: 20, delayMax: 30,
-                    videoModel: 'veo_3_1_fast', imageModel: 'imagen',
+                    videoModel: 'veo_3_1_fast', imageModel: 'nano_banana_2',
                     downloadVideoQuality: '1080p', downloadImageQuality: '4k',
-                    projectName: 'flow_project', maxRetries: 20, defaultVideoFrame: '8s',
-                    maxImagesPerPrompt: 2, language: 'en'
+                    projectName: 'flow_project', maxRetries: 2, defaultVideoFrame: '8s',
+                    maxImagesPerPrompt: 2, language: 'es'
                 }
             });
         }

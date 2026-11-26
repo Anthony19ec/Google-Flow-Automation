@@ -12,6 +12,9 @@
     let isRunning = false;
     let activeRuns = 0;
     let shadowRef = null;
+    let panelCollapsed = false;
+    let promptEditor = null;
+    let approvedMode = null;
 
     const wait = (s) => new Promise(r => setTimeout(r, s * 1000));
     const uid = () => Math.random().toString(36).slice(2, 9);
@@ -36,7 +39,7 @@
         if (Array.isArray(saved)) queue = saved.slice(-500).filter(q => q && typeof q.text === 'string' && q.text.trim()).map((q,i) => {
             const mode = ['t2i','i2i','t2v','i2v','c2v'].includes(q.mode) ? q.mode : 't2i';
             const hasFiles = Boolean(q.hasFiles || ['i2i','i2v','c2v'].includes(mode));
-            const interrupted = !!q.sentToFlow || ['running','retrying','interrupted'].includes(q.status);
+            const interrupted = q.status!=='done' && (!!q.sentToFlow || ['running','retrying','interrupted'].includes(q.status));
             const status = hasFiles || interrupted ? 'interrupted' :
                 ['pending','done','failed','skipped'].includes(q.status) ? q.status : 'interrupted';
             return {id:String(q.id||uid()),sequence:Number(q.sequence)||i+1,mode,
@@ -53,13 +56,16 @@
     // ══════════════════════════════════════════════════
     const DOM = {
         // Find the main prompt textarea / contenteditable
+        visible(el) {
+            return !!el && !el.closest('#flow-host') && el.getClientRects().length > 0 &&
+                getComputedStyle(el).visibility !== 'hidden';
+        },
         getPromptInput() {
-            return document.querySelector('textarea[aria-label*="prompt" i]')
-                || document.querySelector('textarea[aria-label*="Prompt" i]')
-                || document.querySelector('textarea[placeholder*="prompt" i]')
-                || document.querySelector('textarea[placeholder*="Describe" i]')
-                || document.querySelector('div[contenteditable="true"][role="textbox"]')
-                || document.querySelector('textarea');
+            const editors = [...document.querySelectorAll('textarea,[contenteditable="true"]')].filter(el => this.visible(el));
+            const marked = editors.filter(el => /prompt|describe|describ|qué quieres crear|que quieres crear|what do you want to create|instrucci/i.test(
+                ['aria-label','placeholder','data-placeholder','title'].map(k=>el.getAttribute(k)||'').join(' ')+' '+(el.querySelector('[data-placeholder]')?.getAttribute('data-placeholder')||'')
+            ));
+            return marked.length===1 ? marked[0] : marked.length===0 && editors.length===1 ? editors[0] : null;
         },
 
         findButtonByText(text) {
@@ -87,13 +93,23 @@
         },
 
         getGenerateButton() {
-            return this.findButtonByText('Generate') || this.findButtonByText('Run') || this.findButtonByText('Create');
+            const editor = promptEditor?.isConnected ? promptEditor : this.getPromptInput();
+            if(!editor) return null;
+            const exact = /^(generate|generar|create|crear|submit|enviar|send|run|arrow_forward|arrow_upward|send_rounded|arrow_forward_rounded)(\s+(image|imagen|video|vídeo))?$/i;
+            const rect=editor.getBoundingClientRect();
+            let parent=editor.parentElement;
+            for(let depth=0;parent&&depth<7&&parent!==document.body;depth++,parent=parent.parentElement){
+                const found=[...parent.querySelectorAll('button,[role="button"]')].filter(el=>this.visible(el)&&
+                    Math.abs(el.getBoundingClientRect().top-rect.bottom)<Math.max(180,rect.height+100)&&
+                    [el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('data-tooltip'),el.textContent,...[...el.querySelectorAll('i,span')].map(x=>x.textContent)].some(v=>exact.test((v||'').trim())));
+                if(found.length===1)return found[0];
+                if(found.length>1)return null;
+            }
+            return null;
         },
-
-        getDownloadButton() {
-            return document.querySelector('a[download]')
-                || this.findButtonByText('Download')
-                || document.querySelector('button[aria-label*="Download" i]');
+        getDownloadButtons() {
+            return [...document.querySelectorAll('a[download],button,[role="button"]')].filter(el=>this.visible(el)&&
+                (el.matches('a[download]')||/^(download|descargar|file_download|download_rounded)$/i.test((el.getAttribute('aria-label')||el.getAttribute('title')||el.textContent||'').trim())));
         },
 
         getFileInput() {
@@ -105,7 +121,7 @@
             // Only look in likely active error containers to avoid spotting old messages
             const containers = document.querySelectorAll('[role="alert"], [role="status"], .toast, .snackbar, .error-box, .status-bar');
             for (const el of containers) {
-                const text = el.innerText.toLowerCase();
+                const text = (el.innerText || '').toLowerCase();
                 if (text.includes("policy") && text.includes("error")) return "Policy Error";
                 if (text.includes("busy") || text.includes("server")) return "Server Busy";
                 if (text.includes("rate limit")) return "Rate Limited";
@@ -146,28 +162,25 @@
             console.log('[FLOW] Waiting for prompt input... (' + (i+1) + '/30)');
             await wait(1);
         }
-        if (!el) throw { type: 'retryable', message: 'Prompt input not found after 30s' };
+        if (!el) throw { type: 'manual', message: 'No se identificó el campo de prompt de Flow.' };
 
+        promptEditor=el;
         el.focus();
-        
-        try {
-            // Apply native setter for React
-            if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
-                setNativeValue(el, text);
-            } else {
-                el.textContent = text;
-            }
-        } catch(e) {
-            // Fallback
-            el.value = text;
+        if(el.tagName==='TEXTAREA'||el.tagName==='INPUT'){
+            setNativeValue(el,text);
+            el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));
+        }else{
+            const range=document.createRange();
+            range.selectNodeContents(el);
+            const selection=window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            if(!document.execCommand('insertText',false,text))throw {type:'manual',message:'No se pudo escribir el prompt de forma segura.'};
         }
+        el.dispatchEvent(new Event('change',{bubbles:true}));
+        if(String(el.value??el.innerText??el.textContent).trim()!==text.trim())throw {type:'manual',message:'El editor no confirmó el prompt completo.'};
+        el.blur();
 
-        // Trigger all possible framework event listeners
-        el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-        el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter' }));
-        el.dispatchEvent(new KeyboardEvent('keyup',   { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter' }));
-        
         await wait(0.5);
     }
 
@@ -194,64 +207,32 @@
         await wait(2);
     }
 
-    async function clickGenerate() {
-        // Wait up to 20s for generate button to appear
-        let btn = null;
-        for (let i = 0; i < 20; i++) {
-            btn = DOM.getGenerateButton();
-            if (btn) break;
-            console.log('[FLOW] Waiting for Generate button... (' + (i+1) + '/20)');
+    async function clickGenerate(task) {
+        for(let i=0;i<20;i++){
+            const btn=DOM.getGenerateButton();
+            if(btn&&!btn.disabled&&btn.getAttribute('aria-disabled')!=='true'){
+                if(!isRunning)throw {type:'manual',message:'Cola pausada antes del envío.'};
+                if(String(promptEditor?.value??promptEditor?.innerText??promptEditor?.textContent).trim()!==task.text.trim())throw {type:'manual',message:'El prompt cambió; revisa Flow.'};
+                const baseline=new Set(DOM.getDownloadButtons());
+                task.sentToFlow=true;
+                saveQueue();
+                await queueWrite;
+                btn.click();
+                return baseline;
+            }
             await wait(1);
         }
-        if (!btn) throw { type: 'retryable', message: 'Generate button not found after 20s' };
-
-        // Wait for button to become enabled
-        let tries = 0;
-        while (btn.disabled && tries < 15) {
-            await wait(1);
-            tries++;
-        }
-        if (btn.disabled) throw { type: 'retryable', message: 'Generate button stayed disabled' };
-
-        btn.click();
-        await wait(1);
+        throw {type:'manual',message:'No se identificó un botón Generar/Crear activo junto al prompt. No se envió la tarea.'};
     }
-
-    function waitForCompletion(timeoutSec = 900) {
-        return new Promise((resolve, reject) => {
-            let elapsed = 0;
-            const interval = 5; // check every 5s
-
-            const checker = setInterval(() => {
-                elapsed += interval;
-
-                // Check for download button (success)
-                const dlBtn = DOM.getDownloadButton();
-                if (dlBtn) {
-                    clearInterval(checker);
-                    resolve(dlBtn);
-                    return;
-                }
-
-                // Check for errors
-                const err = DOM.getErrorText();
-                if (err === "Policy Error") {
-                    clearInterval(checker);
-                    reject({ type: "policy", message: err });
-                    return;
-                }
-                if (err) {
-                    clearInterval(checker);
-                    reject({ type: "retryable", message: err });
-                    return;
-                }
-
-                if (elapsed >= timeoutSec) {
-                    clearInterval(checker);
-                    reject({ type: "timeout", message: "Generation timed out" });
-                }
-            }, interval * 1000);
-        });
+    async function waitForCompletion(timeoutSec,baseline) {
+        for(let elapsed=0;elapsed<timeoutSec;elapsed+=5){
+            await wait(5);
+            const err=DOM.getErrorText();
+            if(err)throw {type:'manual',message:err};
+            const fresh=DOM.getDownloadButtons().filter(el=>!baseline.has(el));
+            if(fresh.length===1)return fresh[0];
+        }
+        throw {type:'manual',message:'No se pudo confirmar una descarga nueva. Revisa Flow.'};
     }
 
     async function triggerDownload(task, dlBtn) {
@@ -292,75 +273,18 @@
         let success = false;
         while (!success && task.retries <= (settings.maxRetries || 20)) {
             try {
-                // 1. Switch Mode (Video / Image) — Forceful tab clicking
-                const isVideo = task.mode.includes('v');
-                const targetModeText = isVideo ? 'Video' : 'Image';
-                console.log(`[FLOW] Switching to ${targetModeText} mode...`);
-                
-                let modeBtn = DOM.findButtonByText(targetModeText);
-                
-                // Extra check for case where it's a tab list
-                if (!modeBtn) {
-                     const tabs = Array.from(document.querySelectorAll('[role="tab"], .tab, .mode-selector'));
-                     modeBtn = tabs.find(t => (t.innerText||'').toLowerCase().includes(targetModeText.toLowerCase()));
-                }
-
-                if (modeBtn) {
-                    modeBtn.click();
-                    await wait(2); // Wait longer for mode switch
-                } else {
-                    console.warn(`[FLOW] Could not find ${targetModeText} mode button on page.`);
-                }
-
-                // 2. Set Aspect Ratio
-                const aspectBtn = DOM.findButtonByText(settings.defaultAspect);
-                if (aspectBtn) {
-                    aspectBtn.click();
-                    await wait(0.5);
-                }
-
-                // 3. Set Model
-                const modelId = isVideo ? settings.videoModel : settings.imageModel;
-                const modelMap = {
-                    'veo_3_1_fast': 'Veo 3.1',
-                    'veo_3_1_quality': 'Quality',
-                    'nano_banana_2': 'Nano Banana 2',
-                    'nano_banana_pro': 'Pro',
-                    'imagen_4': 'Imagen 4'
-                };
-                const modelText = modelMap[modelId];
-                if (modelText) {
-                    const mBtn = DOM.findButtonByText(modelText);
-                    if (mBtn) {
-                        mBtn.click();
-                        await wait(0.5);
-                    }
-                }
-
-                // 4. Set Outputs Count
-                const outBtn = DOM.findButtonByText(`${settings.outputsPerPrompt}`);
-                if (outBtn) {
-                    outBtn.click();
-                    await wait(0.5);
-                }
-
-                await wait(1); // Final pause for UI stability
-
-                // 5. Inject files if mode requires
-                if (['i2v', 'c2v', 'i2i'].includes(task.mode) && task.files.length > 0) {
-                    await injectFiles(task.files);
-                }
+                if(task.mode!==approvedMode)throw {type:'manual',message:'Modo distinto al lote confirmado.'};
+                // Native Flow mode, model and output count are confirmed by the user before each batch.
 
                 // Inject prompt text
                 await injectPromptText(task.text);
 
                 // Track potentially billed generations; never automatically re-submit uncertain results.
-                await clickGenerate();
-                task.sentToFlow = true;
+                const baseline = await clickGenerate(task);
                 renderQueue();
 
                 // Wait for result
-                const dlBtn = await waitForCompletion(600);
+                const dlBtn = await waitForCompletion(600, baseline);
 
                 // Download
                 await triggerDownload(task, dlBtn);
@@ -371,20 +295,24 @@
             } catch (err) {
                 const errObj = typeof err === 'object' ? err : { type: 'unknown', message: String(err) };
 
-                if (errObj.type === 'policy') {
+                if (errObj.type === 'policy' && !task.sentToFlow) {
                     task.status = 'skipped';
                     task.error = errObj.message;
                     console.warn(`[FLOW] Skipping (policy): "${task.text.substring(0, 30)}..."`);
                     success = true; // Don't retry policy errors
-                } else if (task.sentToFlow) {
+                } else if (task.sentToFlow || errObj.type==='manual') {
+                    isRunning=false;
+                    setCollapsed(false);
                     task.status = 'interrupted';
-                    task.error = 'Ya se envió a Flow. Comprueba el resultado antes de repetir.';
+                    task.error = task.sentToFlow ? 'Envío posible. Revisa Flow antes de repetir. '+(errObj.message||'') : (errObj.message||'Revisa Flow.');
                     success = true;
                 } else {
                     task.retries++;
                     task.error = errObj.message;
                     console.warn(`[FLOW] Retry ${task.retries}/${settings.maxRetries}: ${errObj.message}`);
                     if (task.retries > (settings.maxRetries || 20)) {
+                        isRunning=false;
+                        setCollapsed(false);
                         task.status = 'failed';
                         success = true;
                     } else {
@@ -534,22 +462,28 @@
         .preview-item.dragging{opacity:0.4;border-color:#2dd4bf;border-style:dashed;}
         .ipp-row{display:flex;align-items:center;gap:8px;margin-top:8px;}
         .ipp-row label{font-size:13px;color:#d1d5db;font-weight:500;}
+        #xDock{display:none;align-items:center;gap:7px;background:#111827;color:#fff;padding:5px;border:1px solid #374151;border-radius:9px;font-size:13px;}
+        #xDock button,#xMin{background:#2dd4bf;color:#000;border:0;border-radius:7px;padding:9px;font-size:14px;font-weight:700;cursor:pointer;}
+        #flow-wrap.collapsed #flow,#flow-wrap.collapsed .resize-handle{display:none;}
+        #flow-wrap.collapsed #xDock{display:flex;}
+        @media(pointer:coarse),(max-width:700px){.resize-handle{display:none}.head{padding:10px;gap:5px;flex-wrap:wrap}.h-title{font-size:16px}.h-sub{display:none}.grid2{grid-template-columns:1fr}.box{padding:9px}.body{min-height:0;overflow:auto}.btn{padding:10px}.modes{gap:5px}}
         
         `;
     }
 
     function buildHTML() {
-        const currentMode = settings.defaultMode || 't2v';
+        const selectedMode = currentMode;
         return `
         <div id="flow-wrap">
+            <div id="xDock"><button id="xOpen" type="button">Flow ▾</button><button id="xDockPause" type="button" style="display:none">Pausar</button><span id="xMiniStatus"></span></div>
             <div class="resize-handle" id="xResize"></div>
             <div id="flow">
             <div class="head">
                 <div class="head-left">
-                    <div class="h-title">${ICONS.logo} Flow Automation <span class="badge">v1.0</span></div>
+                    <div class="h-title">${ICONS.logo} Flow Automation <span class="badge">v1.2.1</span></div>
                     <div class="h-sub">Create batch videos and images on Google Flow.</div>
                 </div>
-                <div class="head-right">
+                <div class="head-right"><button id="xMin" type="button" aria-label="Minimizar panel">−</button>
                     <select class="lang" id="xLang">
                         <option value="en" ${settings.language==='en'?'selected':''}>English</option>
                         <option value="es" ${settings.language==='es'?'selected':''}>Español</option>
@@ -569,11 +503,11 @@
                 <!-- ═══ CONTROL ═══ -->
                 <div class="pane on" id="pControl">
                     <div class="modes">
-                        <button class="mbtn ${currentMode==='t2v'?'on':''}" data-m="t2v">${ICONS.doc} ${L('t2v')}</button>
-                        <button class="mbtn ${currentMode==='i2v'?'on':''}" data-m="i2v">${ICONS.pic} ${L('i2v')}</button>
-                        <button class="mbtn ${currentMode==='c2v'?'on':''}" data-m="c2v">${ICONS.grid} ${L('c2v')}</button>
-                        <button class="mbtn" data-m="t2i" style="grid-column:span 1">${ICONS.star} ${L('t2i')}</button>
-                        <button class="mbtn" data-m="i2i" style="grid-column:span 2">${ICONS.pic} ${L('i2i')}</button>
+                        <button class="mbtn ${selectedMode==='t2v'?'on':''}" data-m="t2v">${ICONS.doc} ${L('t2v')}</button>
+                        <button class="mbtn ${selectedMode==='i2v'?'on':''}" data-m="i2v">${ICONS.pic} ${L('i2v')}</button>
+                        <button class="mbtn ${selectedMode==='c2v'?'on':''}" data-m="c2v">${ICONS.grid} ${L('c2v')}</button>
+                        <button class="mbtn ${selectedMode==='t2i'?'on':''}" data-m="t2i" style="grid-column:span 1">${ICONS.star} ${L('t2i')}</button>
+                        <button class="mbtn ${selectedMode==='i2i'?'on':''}" data-m="i2i" style="grid-column:span 2">${ICONS.pic} ${L('i2i')}</button>
                     </div>
 
                     <div class="grid2">
@@ -732,6 +666,10 @@
         const runBtn = shadowRef.getElementById('xRun');
         const stopBtn = shadowRef.getElementById('xStop');
 
+        const mini=shadowRef.getElementById('xMiniStatus');
+        const pause=shadowRef.getElementById('xDockPause');
+        if(mini)mini.textContent=isRunning?'En curso':(activeRuns?'Finalizando':'');
+        if(pause)pause.style.display=isRunning?'block':'none';
         if (countEl) countEl.textContent = queue.filter(q => q.status === 'pending').length;
         if (statusEl) statusEl.textContent = isRunning ? L('running') : (activeRuns ? 'Finalizando tarea' : L('idle'));
         if (activeEl) activeEl.textContent = activeRuns;
@@ -758,6 +696,7 @@
                         </div>
                     </div>
                     ${fileThumbs}
+                    ${q.error ? `<div style="color:#fca5a5;overflow-wrap:anywhere;">${Flow.escapeHTML(q.error)}</div>` : ''}
                 </div>
             `;
         }).join('');
@@ -863,7 +802,20 @@
     // ══════════════════════════════════════════════════
     let currentMode = 't2v';
 
+    function setCollapsed(value) {
+        panelCollapsed=value;
+        const host=document.getElementById('flow-host');
+        const wrap=shadowRef?.getElementById('flow-wrap');
+        if(!host||!wrap)return;
+        const mobile=matchMedia('(pointer:coarse), (max-width:700px)').matches;
+        wrap.classList.toggle('collapsed',value);
+        Object.assign(host.style,value?{width:'max-content',height:'auto',top:'8px',right:'8px'}:{width:mobile?'min(94vw, 560px)':'min(480px, 94vw)',height:mobile?'65vh':'100vh',top:'0',right:'0'});
+    }
     function wireEvents(s) {
+        s.getElementById('xMin').addEventListener('click',()=>setCollapsed(true));
+        s.getElementById('xOpen').addEventListener('click',()=>setCollapsed(false));
+        s.getElementById('xDockPause').addEventListener('click',()=>{isRunning=false;renderQueue();});
+
         // Prevent host page from stealing keyboard events (Backspace, Delete, etc.)
         s.addEventListener('keydown', (e) => {
             e.stopPropagation();
@@ -953,7 +905,17 @@
                 return;
             }
             if (queue.some(q => q.status === 'pending')) {
-                isRunning = true;
+                const pending=queue.filter(q=>q.status==='pending');
+                const modes=new Set(pending.map(q=>q.mode));
+                if(modes.size!==1||!['t2i','t2v'].includes(pending[0].mode)){
+                    alert('Para esta prueba usa solo texto a imagen o texto a video. Vacía la cola si contiene otros modos.');
+                    return;
+                }
+                const mode=pending[0].mode;
+                if(!confirm('Confirma que ya seleccionaste en Google Flow el modo '+(mode==='t2i'?'IMAGEN':'VIDEO')+', el modelo, la proporción y 1 resultado. Se enviarán '+pending.length+' prompts automáticamente.'))return;
+                approvedMode=mode;
+                isRunning=true;
+                setCollapsed(true);
                 renderQueue();
                 automationLoop();
             } else {
@@ -967,11 +929,11 @@
 
         // Clear queue
         s.getElementById('xClear').addEventListener('click', () => { 
-            if (!isRunning) {
+            if (!isRunning && activeRuns===0) {
                 queue = [];
                 activeRuns = 0;
             } else {
-                queue = queue.filter(q => q.status === 'running');
+                queue = queue.filter(q => q.status === 'running' || q.status === 'retrying');
             }
             renderQueue(); 
         });
@@ -1048,12 +1010,12 @@
         shadowRef = shadow;
         wireEvents(shadow);
         renderQueue();
+        setCollapsed(panelCollapsed);
     }
 
     function isProjectPage() {
-        const url = window.location.href;
-        // Broaden to any flow page so the sidebar appears on landing page too
-        return url.includes('/flow') || url.includes('/fx/tools/flow');
+        const url=new URL(window.location.href);
+        return url.hostname==='flow.google.com'||(url.hostname==='labs.google'&&/^\/(fx\/tools\/flow|flow)(\/|$)/.test(url.pathname));
     }
 
     function isInsideActualProject() {
@@ -1083,7 +1045,7 @@
         // Create host
         const host = document.createElement('div');
         host.id = 'flow-host';
-        host.style.cssText = 'position:fixed;top:0;right:0;width:480px;height:100vh;z-index:999999;';
+        host.style.cssText = 'position:fixed;top:0;right:0;width:min(480px,94vw);height:65vh;z-index:999999;';
         document.body.appendChild(host);
 
         const shadow = host.attachShadow({ mode: 'open' });

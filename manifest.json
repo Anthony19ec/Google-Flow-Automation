@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Flow Automation",
-  "version": "1.0",
-  "description": "Automate batch video and image generation on Google Flow.",
+  "version": "1.2.0",
+  "description": "Automatización conservadora por lotes en Google Flow: cola persistente, español y descargas numeradas.",
   "permissions": [
     "storage",
     "downloads",
@@ -12,7 +12,8 @@
   ],
   "host_permissions": [
     "*://labs.google/*",
-    "*://*.labs.google/*"
+    "*://*.labs.google/*",
+    "https://flow.google.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -23,7 +24,8 @@
         "*://*.labs.google/fx/tools/flow*",
         "*://*.labs.google/flow*",
         "*://labs.google/fx/tools/flow*",
-        "*://labs.google/flow*"
+        "*://labs.google/flow*",
+        "https://flow.google.com/*"
       ],
       "js": [
         "logic.js",
@@ -37,8 +39,13 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["styles.css"],
-      "matches": ["*://labs.google/*"]
+      "resources": [
+        "styles.css"
+      ],
+      "matches": [
+        "*://labs.google/*",
+        "https://flow.google.com/*"
+      ]
     }
   ]
 }

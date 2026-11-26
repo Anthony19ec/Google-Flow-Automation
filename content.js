@@ -18,6 +18,35 @@
     const rDelay = () => Flow.getRandomDelay(settings.delayMin || 20, settings.delayMax || 30);
     let uploadedFiles = []; // Persistent file storage across interactions
     let draggedIdx = null;  // Track dragged item for reordering
+    const QUEUE_KEY = 'flow_automation_queue_v1_2';
+    let queueReady = false;
+    let queueWrite = Promise.resolve();
+    let nextSequence = 1;
+    function saveQueue() {
+        if (!queueReady) return;
+        const items = queue.slice(-500).map(q => ({
+            id:q.id, sequence:q.sequence, mode:q.mode, text:q.text, status:q.status,
+            retries:q.retries, error:q.error, sentToFlow:!!q.sentToFlow,
+            hasFiles:!!((q.files && q.files.length) || q.hasFiles)
+        }));
+        queueWrite = queueWrite.catch(() => {}).then(() => Flow.Storage.set(QUEUE_KEY,items));
+    }
+    async function loadQueue() {
+        const saved = await Flow.Storage.get(QUEUE_KEY,[]);
+        if (Array.isArray(saved)) queue = saved.slice(-500).filter(q => q && typeof q.text === 'string' && q.text.trim()).map((q,i) => {
+            const mode = ['t2i','i2i','t2v','i2v','c2v'].includes(q.mode) ? q.mode : 't2i';
+            const hasFiles = Boolean(q.hasFiles || ['i2i','i2v','c2v'].includes(mode));
+            const interrupted = !!q.sentToFlow || ['running','retrying','interrupted'].includes(q.status);
+            const status = hasFiles || interrupted ? 'interrupted' :
+                ['pending','done','failed','skipped'].includes(q.status) ? q.status : 'interrupted';
+            return {id:String(q.id||uid()),sequence:Number(q.sequence)||i+1,mode,
+                text:q.text.slice(0,20000),files:[],hasFiles,status,retries:Number(q.retries)||0,
+                error:hasFiles ? 'Vuelve a cargar las imágenes de referencia y crea otra tarea.' :
+                    interrupted ? 'Revisa en Flow antes de repetir esta tarea.' : String(q.error||'')};
+        });
+        nextSequence = Math.max(0,...queue.map(q=>Number(q.sequence)||0))+1;
+        queueReady = true;
+    }
 
     // ══════════════════════════════════════════════════
     // DOM FINDERS — robust selectors for Google Flow
@@ -248,7 +277,7 @@
         chrome.runtime.sendMessage({
             action: "download",
             url: url,
-            filename: Flow.sanitizeFilename(task.text, ext),
+            filename: `escena_${String(task.sequence || 1).padStart(3, '0')}.${ext}`,
             projectName: settings.projectName,
             quality: quality
         });
@@ -325,8 +354,10 @@
                 // Inject prompt text
                 await injectPromptText(task.text);
 
-                // Click generate
+                // Track potentially billed generations; never automatically re-submit uncertain results.
                 await clickGenerate();
+                task.sentToFlow = true;
+                renderQueue();
 
                 // Wait for result
                 const dlBtn = await waitForCompletion(600);
@@ -345,6 +376,10 @@
                     task.error = errObj.message;
                     console.warn(`[FLOW] Skipping (policy): "${task.text.substring(0, 30)}..."`);
                     success = true; // Don't retry policy errors
+                } else if (task.sentToFlow) {
+                    task.status = 'interrupted';
+                    task.error = 'Ya se envió a Flow. Comprueba el resultado antes de repetir.';
+                    success = true;
                 } else {
                     task.retries++;
                     task.error = errObj.message;
@@ -369,7 +404,7 @@
         while (isRunning) {
             const pending = queue.find(q => q.status === 'pending');
 
-            if (pending && activeRuns < (settings.maxConcurrent || 1)) {
+            if (pending && activeRuns < 1) {
                 executeTask(pending); // fire-and-forget async (parallel if slots open)
                 const delay = rDelay();
                 console.log(`[FLOW] Next prompt in ${delay}s`);
@@ -516,7 +551,8 @@
                 </div>
                 <div class="head-right">
                     <select class="lang" id="xLang">
-                        <option value="en">English</option>
+                        <option value="en" ${settings.language==='en'?'selected':''}>English</option>
+                        <option value="es" ${settings.language==='es'?'selected':''}>Español</option>
                         <option value="vi">Tiếng Việt</option>
                         <option value="zh">中文</option>
                     </select>
@@ -544,7 +580,7 @@
                         <div class="box">
                             <div class="box-t">${ICONS.bolt} ${L('concurrent')}</div>
                             <select class="sel" id="xConc">
-                                ${[1,2,3,4,5,6].map(n => `<option value="${n}" ${n==settings.maxConcurrent?'selected':''}>${n} prompt${n>1?'s':''}</option>`).join('')}
+                                <option value="1" selected>1 (seguro)</option>
                             </select>
                             <div class="box-s">${L('concurrentSub')}</div>
                         </div>
@@ -687,6 +723,7 @@
     // RENDER QUEUE
     // ══════════════════════════════════════════════════
     function renderQueue() {
+        saveQueue();
         if (!shadowRef) return;
         const list = shadowRef.getElementById('xQList');
         const countEl = shadowRef.getElementById('xQC');
@@ -696,24 +733,25 @@
         const stopBtn = shadowRef.getElementById('xStop');
 
         if (countEl) countEl.textContent = queue.filter(q => q.status === 'pending').length;
-        if (statusEl) statusEl.textContent = isRunning ? L('running') : L('idle');
+        if (statusEl) statusEl.textContent = isRunning ? L('running') : (activeRuns ? 'Finalizando tarea' : L('idle'));
         if (activeEl) activeEl.textContent = activeRuns;
-        if (runBtn) runBtn.style.display = isRunning ? 'none' : 'block';
+        if (runBtn) runBtn.style.display = (isRunning || activeRuns > 0) ? 'none' : 'block';
         if (stopBtn) stopBtn.style.display = isRunning ? 'block' : 'none';
 
         if (!list) return;
         list.innerHTML = queue.map(q => {
+            const safeText = Flow.escapeHTML(q.text);
             const hasFiles = q.files && q.files.length > 0;
             const fileThumbs = hasFiles ? `
                 <div class="qi-thumbs">
-                    ${q.files.map(f => `<img src="${URL.createObjectURL(f)}" class="qi-thumb" title="${f.name}">`).join('')}
+                    ${q.files.map(f => `<img src="${URL.createObjectURL(f)}" class="qi-thumb" title="${Flow.escapeHTML(f.name)}">`).join('')}
                 </div>
             ` : '';
 
             return `
                 <div class="qi">
                     <div class="qi-main">
-                        <span class="t" title="${q.text}">[${q.mode.toUpperCase()}] ${q.text}</span>
+                        <span class="t" title="${safeText}">[${q.mode.toUpperCase()}] ${safeText}</span>
                         <div style="display:flex;align-items:center;gap:10px;">
                             <span class="s s-${q.status}">${q.status}${q.retries > 0 ? ' ('+q.retries+')' : ''}</span>
                             ${q.status === 'pending' ? `<button class="qrm" data-rm="${q.id}">×</button>` : ''}
@@ -765,8 +803,8 @@
             const sizeKB = (f.size / 1024).toFixed(0);
             return `
                 <div class="preview-item" data-idx="${i}" draggable="true">
-                    <img src="${URL.createObjectURL(f)}" alt="${f.name}">
-                    <div class="preview-info" title="${f.name}">${f.name} (${sizeKB}KB)</div>
+                    <img src="${URL.createObjectURL(f)}" alt="${Flow.escapeHTML(f.name)}">
+                    <div class="preview-info" title="${Flow.escapeHTML(f.name)}">${Flow.escapeHTML(f.name)} (${sizeKB}KB)</div>
                     <button class="preview-rm" data-rm="${i}">×</button>
                 </div>`;
         }).join('');
@@ -884,10 +922,7 @@
             let raw = ta.value.trim();
             if (txtFile.files.length > 0) raw += "\n\n" + await txtFile.files[0].text();
 
-            // If completely empty, use the placeholder as a demo so user doesn't think "nothing works"
-            if (!raw) {
-                raw = "A serene sunset over a calm ocean...\nA bustling city street at night...";
-            }
+            if (!raw) { alert(L('emptyPrompts')); return; }
 
             const prompts = Flow.parsePrompts(raw);
             const ipp = parseInt((s.getElementById('xIpp') || {}).value) || (settings.maxImagesPerPrompt || 2);
@@ -901,7 +936,7 @@
                     const startIdx = idx * ipp;
                     matched = uploadedFiles.slice(startIdx, startIdx + ipp);
                 }
-                queue.push({ id: uid(), mode: currentMode, text: p, files: matched, status: 'pending', retries: 0, error: '' });
+                queue.push({ id: uid(), sequence: nextSequence++, mode: currentMode, text: p, files: matched, status: 'pending', retries: 0, error: '' });
             });
 
             ta.value = ''; 
@@ -925,11 +960,9 @@
                 alert("Queue is empty!\n\nPlease type a prompt into the text box and click 'Add to Queue' first.");
             }
         });
-        s.getElementById('xStop').addEventListener('click', () => { 
-            isRunning = false; 
-            activeRuns = 0;
-            queue.forEach(q => { if (q.status === 'running') q.status = 'pending'; });
-            renderQueue(); 
+        s.getElementById('xStop').addEventListener('click', () => {
+            isRunning = false;
+            renderQueue();
         });
 
         // Clear queue
@@ -1041,6 +1074,8 @@
         // Load settings
         const saved = await Flow.Storage.get('settings', Flow.DEFAULTS);
         settings = { ...Flow.DEFAULTS, ...saved };
+        settings.maxConcurrent = 1;
+        await loadQueue();
         currentMode = settings.defaultMode || 't2v';
 
         // No zoom override — keep native browser zoom for clarity

@@ -7,7 +7,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const url = tabs[0]?.url || "";
-        const onFlow = url.includes("labs.google") && (url.includes("flow") || url.includes("fx/tools"));
+        let page; try { page = new URL(url); } catch (_) { page = null; }
+        const onFlow = !!page && (page.hostname === "flow.google.com" ||
+            (page.hostname === "labs.google" && /^\/(fx\/tools\/flow|flow)(\/|$)/.test(page.pathname)));
 
         if (onFlow) {
             info.innerHTML = '<strong>Flow Automation</strong> is active on this tab.<br><br>Use the side panel on the page to manage your batch generation.';
@@ -21,6 +23,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     btn.addEventListener('click', () => {
-        chrome.tabs.create({ url: "https://labs.google/fx/tools/flow/" });
+        chrome.tabs.create({ url: "https://flow.google.com/" });
     });
 });

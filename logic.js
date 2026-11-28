@@ -4,11 +4,32 @@ const Flow = {};
 
 // ─── Localization ───
 Flow.Locales = {
+    es: {
+        title: "Flow Automation", control: "Control", queue: "Cola", settings: "Ajustes",
+        t2v: "Texto a video", i2v: "Imagen a video", c2v: "Ingredientes a video",
+        t2i: "Texto a imagen", i2i: "Imagen a imagen",
+        start: "▶ Iniciar", stop: "■ Pausar al terminar la tarea", addQueue: "Añadir a la cola",
+        clearQueue: "Vaciar cola", remove: "Eliminar", pending: "Pendiente", running: "Generando",
+        done: "Completado", failed: "Fallido", retrying: "Reintentando", interrupted: "Revisar en Flow",
+        concurrent: "Tareas simultáneas", delay: "Espera entre prompts",
+        concurrentSub: "Una tarea por vez para no mezclar instrucciones.",
+        delaySub: "Tiempo de espera antes de cada nueva tarea.",
+        uploadTitle: "Añade imágenes de referencia", uploadSub: "PNG, JPG, GIF (máx. 10 MB por archivo)",
+        promptLabel: "Prompts", txtUpload: "o subir archivo .txt",
+        projectName: "Nombre del proyecto", maxRetries: "Reintentos máximos",
+        dlVideo: "Descarga automática de video", dlImage: "Descarga automática de imagen",
+        saveSettings: "Guardar ajustes", imgProcess: "Procesamiento de imágenes",
+        imgOpt1: "Primera y última imagen por prompt", imgOpt2: "Una imagen por prompt",
+        zoomNote: "No cambies el zoom durante la generación.", ready: "Listo", idle: "En espera",
+        userGuide: "Guía", language: "Idioma", videoModel: "Modelo de video",
+        imageModel: "Modelo de imagen", aspectRatio: "Proporción", outputsPerPrompt: "Resultados por prompt",
+        videoFrame: "Duración del video", emptyPrompts: "Escribe o sube al menos un prompt."
+    },
     en: {
         title: "Flow Automation", control: "Control", queue: "Queue", settings: "Setting",
         t2v: "Text to Video", i2v: "Frame to Video", c2v: "Ingredients to Video",
         t2i: "Text to Image", i2i: "Image to Image",
-        start: "▶ Run", stop: "■ Stop", addQueue: "Add to Queue",
+        start: "▶ Run", stop: "■ Pause after current task", addQueue: "Add to Queue",
         clearQueue: "Clear All", remove: "Remove", pending: "Pending", running: "Running",
         done: "Done", failed: "Failed", retrying: "Retrying",
         concurrent: "Concurrent Prompts", delay: "Random Delay",
@@ -23,7 +44,7 @@ Flow.Locales = {
         zoomNote: "Do not adjust zoom while running.", ready: "Ready", idle: "Idle",
         userGuide: "User Guide", language: "Language",
         videoModel: "Video Model", imageModel: "Image Model", aspectRatio: "Aspect Ratio",
-        outputsPerPrompt: "Outputs per Prompt", videoFrame: "Video Frame Duration"
+        outputsPerPrompt: "Outputs per Prompt", videoFrame: "Video Frame Duration", emptyPrompts: "Add at least one prompt before filling the queue."
     },
     vi: {
         title: "Tự động hóa Flow", control: "Điều khiển", queue: "Hàng đợi", settings: "Cài đặt",
@@ -70,9 +91,12 @@ Flow.Locales = {
 };
 
 // ─── Prompt Parser ───
+// Con líneas en blanco, cada bloque es un prompt; si no, cada línea es un prompt.
 Flow.parsePrompts = (rawText) => {
-    if (!rawText || !rawText.trim()) return [];
-    return rawText.split(/\n\s*\n/).map(p => p.trim()).filter(p => p.length > 0);
+    const clean = String(rawText || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
+    if (!clean) return [];
+    const chunks = /\n\s*\n/.test(clean) ? clean.split(/\n\s*\n+/) : clean.split('\n');
+    return chunks.map(p => p.trim()).filter(Boolean);
 };
 
 // ─── Asset Matching ───
@@ -84,6 +108,11 @@ Flow.matchAssets = (files, promptText) => {
         return stem.length > 0 && lower.includes(stem);
     });
 };
+
+// ─── Evita que el texto del usuario se interprete como HTML ───
+Flow.escapeHTML = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+})[c]);
 
 // ─── Filename Sanitizer ───
 Flow.sanitizeFilename = (prompt, ext = "mp4") => {
@@ -115,10 +144,10 @@ Flow.DEFAULTS = {
     downloadVideoQuality: '1080p',
     downloadImageQuality: '4k',
     projectName: 'flow_project',
-    maxRetries: 20,
+    maxRetries: 2,
     defaultVideoFrame: '8s',
     maxImagesPerPrompt: 2,
-    language: 'en'
+    language: 'es'
 };
 
 // ─── Random Delay ───
